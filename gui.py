@@ -15,6 +15,7 @@ COLUMNS = ("no", "time", "src", "dst", "protocol", "length", "info")
 
 # How many entries the "most active source/destination IPs" lists show
 TOP_N = 5
+MAX_DISPLAY_ROWS = 2000  # Keep the Treeview bounded during long captures.
 
 # Size of each chart drawing area and of the pie itself (in pixels)
 CHART_W = 440
@@ -276,8 +277,8 @@ class PacketApp(tk.Tk):
         # One line per IP: left-aligned address, right-aligned packet count
         return "\n".join(f"{ip:<16} {count:>6} pkts" for ip, count in counter.most_common(TOP_N))
 
-    def _record_stats(self, pkt: dict):
-        """Update running totals with one packet and refresh the panel."""
+    def _record_stats(self, pkt: dict, refresh=True):
+        """Update running totals; batch callers refresh the panel once per batch."""
         # Read the packet size safely; bad or missing values count as 0
         # so one malformed packet can't crash the GUI
         try:
@@ -302,8 +303,8 @@ class PacketApp(tk.Tk):
         # Count the packet under its protocol (TCP, UDP, ...)
         self._protocol_counter[str(pkt.get("protocol", "")).upper()] += 1
 
-        # Redraw the panel so the new numbers appear immediately
-        self._refresh_stats()
+        if refresh:
+            self._refresh_stats()
 
     def _refresh_stats(self):
         """Redraw every value in the statistics panel."""
@@ -498,11 +499,29 @@ class PacketApp(tk.Tk):
         ).pack(fill="x", side="bottom")
 
     def add_packet(self, pkt: dict):
-        """Add a packet record as a new row in the table."""
-        self.tree.insert("", "end", values=[pkt.get(c, "") for c in COLUMNS])
+        """Backward-compatible single-packet insert."""
+        self.add_packets([pkt])
+
+    def add_packets(self, packets):
+        """Insert a batch of rows and refresh statistics only once."""
+        if not packets:
+            return
+        for pkt in packets:
+            self.tree.insert("", "end", values=[pkt.get(c, "") for c in COLUMNS])
+            self._record_stats(pkt, refresh=False)
+
+        # Prevent the visible table from growing without limit.
+        children = self.tree.get_children()
+        excess = len(children) - MAX_DISPLAY_ROWS
+        if excess > 0:
+            self.tree.delete(*children[:excess])
+
+        self._refresh_stats()
         self.tree.yview_moveto(1)
-        # Include this packet in the statistics
-        self._record_stats(pkt)
+
+    def show_summary(self):
+        """Public entry point used after capture has fully stopped."""
+        self._show_summary()
 
     def clear_packets(self):
         """Remove all rows from the packet table."""
@@ -532,14 +551,12 @@ class PacketApp(tk.Tk):
 
     def _stop(self):
         """Stop the active packet capture."""
-        # Turn Stop red (and Start back to normal) as soon as Stop is clicked
-        self._set_button_colors(False)
+        # The controller changes button state after the capture thread has stopped.
         if self.on_stop:
             self.on_stop()
         else:
             self.set_status("Stopped")
-        # Calculate and show the incoming/outgoing and TCP/UDP summary now
-        self._show_summary()
+        # The controller displays the final summary after the capture thread stops.
 
 
 if __name__ == "__main__":
