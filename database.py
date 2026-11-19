@@ -1,130 +1,209 @@
-"""SQLite storage helpers for captured network packets."""
-import sqlite3
-from contextlib import contextmanager
+import os
 from datetime import datetime
+from pathlib import Path
 
-DB_PATH = "packets.db"
+import msgpack
+
+SESSION_DIRECTORY = Path(__file__).resolve().parent / "session_packets"
+FILE_NAME = str(Path(__file__).resolve().parent / "packets.msgpack")
+next_id = 1
 
 
-def _connect():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("PRAGMA busy_timeout = 10000")
-    return conn
+def start_session():
+    """Create a new per-run packet log and make it the active database file."""
+    global FILE_NAME, next_id
+
+    SESSION_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    session_name = datetime.now().strftime("packets_%Y%m%d_%H%M%S_%f.msgpack")
+    FILE_NAME = str(SESSION_DIRECTORY / session_name)
+    Path(FILE_NAME).touch()
+    next_id = 1
+    return FILE_NAME
 
 
-@contextmanager
-def _connection():
-    """Commit/rollback as a context manager and always close the connection."""
-    conn = _connect()
-    try:
-        with conn:
-            yield conn
-    finally:
-        conn.close()
+def read_records(file_path=None):
+    """Read all saved packet records."""
+    source_path = FILE_NAME if file_path is None else file_path
+    if not os.path.exists(source_path):
+        return []
+
+    records = []
+    with open(source_path, "rb") as file:
+        unpacker = msgpack.Unpacker(
+            file,
+            raw=False,
+            strict_map_key=False
+        )
+        for record in unpacker:
+            if isinstance(record, dict):
+                records.append(record)
+    return records
 
 
 def init_db():
-    with _connection() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS packets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT,
-                source_ip TEXT,
-                destination_ip TEXT,
-                protocol TEXT,
-                length INTEGER,
-                source_port INTEGER,
-                destination_port INTEGER,
-                info TEXT
-            )
-        """)
-        columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(packets)").fetchall()
+    """Initialize packet record IDs."""
+    global next_id
+    records = read_records()
+    if records:
+        next_id = max(
+            int(record.get("id", 0))
+            for record in records
+        ) + 1
+    else:
+        next_id = 1
+
+
+def clear_session():
+    """Start a fresh packet file while preserving the previous capture file."""
+    return start_session()
+
+
+def save_packets(packets):
+    """Save a batch of packet records using MessagePack."""
+    global next_id
+
+    if not packets:
+        return
+
+    records_to_write = []
+    for packet in packets:
+        record = {
+            "id": next_id,
+            "timestamp": packet.get("timestamp", ""),
+            "source_ip": packet.get("source_ip", ""),
+            "destination_ip": packet.get("destination_ip", ""),
+            "protocol": packet.get("protocol", ""),
+            "length": packet.get("length", 0),
+            "info": packet.get("info", ""),
+            "source_port": packet.get("source_port"),
+            "destination_port": packet.get("destination_port")
         }
-        if "source_port" not in columns:
-            conn.execute("ALTER TABLE packets ADD COLUMN source_port INTEGER")
-        if "destination_port" not in columns:
-            conn.execute("ALTER TABLE packets ADD COLUMN destination_port INTEGER")
+        records_to_write.append(record)
+        next_id += 1
 
-
-def save_packets(packet_dicts):
-    """Insert a batch in one transaction instead of reconnecting per packet."""
-    rows = []
-    for packet in packet_dicts:
-        rows.append((
-            packet.get("timestamp") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            packet.get("source_ip", "N/A"),
-            packet.get("destination_ip", "N/A"),
-            packet.get("protocol", "N/A"),
-            int(packet.get("length", 0) or 0),
-            packet.get("source_port"),
-            packet.get("destination_port"),
-            packet.get("info", ""),
-        ))
-    if not rows:
-        return 0
-
-    with _connection() as conn:
-        conn.executemany("""
-            INSERT INTO packets (
-                timestamp, source_ip, destination_ip, protocol, length,
-                source_port, destination_port, info
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, rows)
-    return len(rows)
-
-
-def save_packet(packet_dict):
-    """Backward-compatible single-packet helper."""
-    return save_packets([packet_dict])
+    with open(FILE_NAME, "ab") as file:
+        for record in records_to_write:
+            msgpack.pack(
+                record,
+                file,
+                use_bin_type=True
+            )
 
 
 def get_filtered_packets(
-    protocol="", source_ip="", destination_ip="", port="", keyword="",
-    min_size="", max_size="", start_time="", end_time=""
+    protocol="",
+    source_ip="",
+    destination_ip="",
+    port="",
+    keyword="",
+    min_size="",
+    max_size="",
+    start_time="",
+    end_time="",
+    search=""
 ):
-    query = """
-        SELECT id, timestamp, source_ip, destination_ip, protocol, length, info
-        FROM packets WHERE 1=1
-    """
-    params = []
-    if protocol and protocol != "All":
-        query += " AND protocol = ?"
-        params.append(protocol)
-    if source_ip:
-        query += " AND source_ip LIKE ?"
-        params.append(f"%{source_ip}%")
-    if destination_ip:
-        query += " AND destination_ip LIKE ?"
-        params.append(f"%{destination_ip}%")
-    if port:
-        query += " AND (source_port = ? OR destination_port = ?)"
-        params.extend([int(port), int(port)])
-    if keyword:
-        query += " AND info LIKE ?"
-        params.append(f"%{keyword}%")
-    if min_size != "":
-        query += " AND length >= ?"
-        params.append(int(min_size))
-    if max_size != "":
-        query += " AND length <= ?"
-        params.append(int(max_size))
-    if start_time:
-        query += " AND timestamp >= ?"
-        params.append(start_time)
-    if end_time:
-        query += " AND timestamp <= ?"
-        params.append(end_time)
-    query += " ORDER BY id DESC"
+    """Filter saved packet records."""
+    records = read_records()
+    results = []
+    search = search.strip().lower()
 
-    with _connection() as conn:
-        return conn.execute(query, params).fetchall()
+    for record in records:
+        if search:
+            searchable_values = (
+                record.get("source_ip", ""),
+                record.get("destination_ip", ""),
+                record.get("protocol", ""),
+                record.get("info", ""),
+                record.get("source_port", ""),
+                record.get("destination_port", ""),
+            )
+            if not any(search in str(value).lower() for value in searchable_values):
+                continue
+
+        if protocol and protocol != "All":
+            if str(record.get("protocol", "")).lower() != protocol.lower():
+                continue
+
+        if source_ip:
+            if source_ip.lower() not in str(
+                record.get("source_ip", "")
+            ).lower():
+                continue
+
+        if destination_ip:
+            if destination_ip.lower() not in str(
+                record.get("destination_ip", "")
+            ).lower():
+                continue
+
+        if port:
+            try:
+                selected_port = int(port)
+            except ValueError:
+                continue
+
+            packet_ports = {
+                str(record.get("source_port") or ""),
+                str(record.get("destination_port") or ""),
+            }
+            if str(selected_port) not in packet_ports:
+                continue
+
+        if keyword:
+            if keyword.lower() not in str(
+                record.get("info", "")
+            ).lower():
+                continue
+
+        if min_size:
+            try:
+                if int(record.get("length", 0)) < int(min_size):
+                    continue
+            except ValueError:
+                continue
+
+        if max_size:
+            try:
+                if int(record.get("length", 0)) > int(max_size):
+                    continue
+            except ValueError:
+                continue
+
+        if start_time:
+            if record.get("timestamp", "") < start_time:
+                continue
+
+        if end_time:
+            if record.get("timestamp", "") > end_time:
+                continue
+
+        results.append(record)
+
+    results.sort(
+        key=lambda item: item.get("id", 0),
+        reverse=True
+    )
+
+    return [
+        (
+            item.get("id"),
+            item.get("timestamp"),
+            item.get("source_ip"),
+            item.get("destination_ip"),
+            item.get("protocol"),
+            item.get("length"),
+            item.get("source_port"),
+            item.get("destination_port"),
+            item.get("info")
+        )
+        for item in results
+    ]
 
 
 def get_all_packets():
+    """Retrieve all saved packet records."""
     return get_filtered_packets()
 
 
-if __name__ == "__main__":
-    init_db()
-    print("Database initialized!")
+def get_export_packets():
+    return get_all_packets()

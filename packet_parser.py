@@ -14,6 +14,8 @@ def parse_packet(packet):
         "length": len(packet),
         "source_port": None,
         "destination_port": None,
+        "source_mac": packet[Ether].src if Ether in packet else "",
+        "destination_mac": packet[Ether].dst if Ether in packet else "",
         "info": "General packet",
     }
 

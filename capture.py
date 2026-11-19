@@ -1,6 +1,52 @@
 """Network interface discovery and asynchronous packet capture helpers."""
+import platform
+import re
+import subprocess
+import time
+
 from scapy.all import AsyncSniffer, conf, get_if_addr, get_if_hwaddr, get_if_list
 from packet_parser import parse_packet
+
+
+def get_default_gateway():
+    """Return the IPv4 gateway selected by Scapy's default route, if available."""
+    route = conf.route.route("0.0.0.0")
+    if route and len(route) >= 3:
+        gateway = str(route[2] or "")
+        if gateway and gateway != "0.0.0.0":
+            return gateway
+    return None
+
+
+def ping_gateway(gateway):
+    """Return the gateway response time in milliseconds, or None on packet loss."""
+    if platform.system() == "Windows":
+        command = ["ping", "-n", "1", "-w", "1000", gateway]
+    else:
+        command = ["ping", "-c", "1", "-W", "1", gateway]
+
+    started = time.perf_counter()
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    match = re.search(r"\btime\s*[=<]\s*(\d+(?:\.\d+)?)\s*ms", result.stdout, re.IGNORECASE)
+    if match:
+        return float(match.group(1))
+
+    # Some localized ping outputs omit the English "time=" token.
+    return (time.perf_counter() - started) * 1000
 
 
 def _route_interface_name(route_interface):
