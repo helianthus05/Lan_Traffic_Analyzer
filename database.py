@@ -76,7 +76,9 @@ def save_packets(packets):
             "length": packet.get("length", 0),
             "info": packet.get("info", ""),
             "source_port": packet.get("source_port"),
-            "destination_port": packet.get("destination_port")
+            "destination_port": packet.get("destination_port"),
+            "source_mac": packet.get("source_mac", ""),
+            "destination_mac": packet.get("destination_mac", ""),
         }
         records_to_write.append(record)
         next_id += 1
