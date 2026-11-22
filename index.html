@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>LAN Watch - who’s on your network</title>
+<title>LAN Traffic Analyzer - who’s on your network</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="authGate" class="auth-gate" hidden>
   <div class="auth-card">
-    <h1>LAN Watch</h1>
+    <h1>LAN Traffic Analyzer</h1>
     <p class="sub">Sign in or create an account to open the traffic dashboard.</p>
     <p id="authNotice" class="auth-notice" role="status"></p>
     <div class="tabs auth-tabs" role="tablist">
@@ -21,7 +21,6 @@
     <form id="loginForm">
       <label>Username or Gmail<input name="identifier" autocomplete="username" required></label>
       <label>Password<div class="password-field"><input name="password" type="password" autocomplete="current-password" required><button class="password-toggle" type="button" aria-pressed="false">Show</button></div></label>
-      <label class="check"><input name="remember" type="checkbox"> Keep me signed in until Windows restarts</label>
       <button class="primary" type="submit">Sign in</button>
       <p class="sub">Gmail verification is required once after registration.</p>
       <button id="resendVerification" type="button" hidden>Resend verification email</button>
@@ -42,13 +41,14 @@
       <p class="sub">Use 3-20 letters, numbers, or underscores for the username.</p>
       <button class="primary" type="submit">Create account</button>
     </form>
+    <p class="sub auth-info-link"><a href="about.html">About, FAQ &amp; tutorial</a></p>
   </div>
 </div>
 
 <header class="app-header">
-  <div class="header-title"><strong>NETWORK TRAFFIC ANALYZER</strong><span>Real-Time Packet Inspection · Topology Discovery · Automated Network Diagnostics</span></div>
-  <nav class="site-nav" aria-label="Page sections"><a href="#page-info">About, FAQ &amp; tutorial</a></nav>
-  <div class="header-user"><span id="signedInUser" class="sub"></span><button id="logout" type="button">Log out</button></div>
+  <div class="header-title"><strong>LAN TRAFFIC ANALYZER</strong><span>Real-Time Packet Inspection · Topology Discovery · Automated Network Diagnostics</span></div>
+  <nav class="site-nav" aria-label="Page sections"><a href="about.html" id="navAboutLink">About, FAQ &amp; tutorial</a></nav>
+  <div class="header-user"><span id="signedInUser" class="sub"></span><button id="themeToggle" type="button" aria-pressed="false">Dark theme</button><button id="logout" type="button">Log out</button></div>
 </header>
 
 <div class="wrap">
@@ -56,16 +56,23 @@
   <select id="iface" aria-label="Network interface"><option value="">Loading interfaces…</option></select>
   <button id="refreshInterfaces" type="button">Refresh</button>
   <button id="start" type="button">Start</button><button id="stop" type="button" disabled>Stop</button><button id="clear" type="button">Clear</button>
-  <label class="chk" title="Uses ARP and ping to discover devices on the selected private IPv4 subnet, up to 256 addresses."><input id="discoverIpv4" type="checkbox" checked> Discover local IPv4 devices at start</label>
   <button id="openPackets" type="button">Packets…</button>
   <span class="sub" id="servermsg" style="margin:0"></span>
 </div>
 
 <div class="health" id="health" role="status" aria-live="polite"><b>NETWORK STATUS CHECKING</b><span>Checking the default gateway response.</span></div>
 
+<section id="alertsBanner" class="alerts-banner" aria-live="polite" hidden>
+  <div class="alerts-header">
+    <div><strong id="alertsTitle">Passive network alerts</strong><span id="alertsSummary" class="sub"></span></div>
+    <button id="clearAlerts" type="button">Dismiss alerts</button>
+  </div>
+  <div id="alertsList" class="alerts-list"></div>
+</section>
+
 <div class="grid"><main>
 <section><h2>Live traffic</h2><p class="sub">Live packets received from Scapy on the selected adapter.</p>
-<div class="stats"><div><span>Packets captured</span><b id="tp">0</b></div><div><span>Data transferred</span><b id="td">0 B</b></div><div><span>Average packet size</span><b id="ta">0 B</b></div></div>
+<div class="stats"><div><span>Packets captured</span><b id="tp">0</b></div><div><span>Data transferred</span><b id="td">0 B</b></div><div><span>Average packet size</span><b id="ta">0 B</b></div><div><span>Current rate</span><b id="trate">0 pkt/s · 0 B/s</b></div></div>
 <div class="two" style="margin-top:16px"><div><p class="sub" style="margin:0">Packets per second, last 60 s</p><canvas id="g1"></canvas></div><div><p class="sub" style="margin:0">Bandwidth, last 60 s</p><canvas id="g2"></canvas></div></div>
 <div class="plain-summary"><b>Live traffic in plain English</b><p id="liveSummaryText" role="status" aria-live="off">Start a capture to see a plain-language explanation of the traffic.</p></div></section>
 
@@ -75,13 +82,15 @@
 <section><h2>Traffic summary</h2><p class="sub">Breakdown of the packets received during this capture.</p>
 <div class="pies" id="pies"><span class="sub">Press Start, then Stop to see the breakdown.</span></div></section>
 
-<section><h2>Devices on your network (<span id="cn">0</span>)</h2><p class="sub">IPv4 devices learned from captured packets and ARP/ping discovery at capture start. IPv6 traffic is still captured and remains available in the packet list.</p>
-<div class="filters"><span class="sub" id="scanmsg" style="margin:0;align-self:center">ARP can find local devices even when they block ping.</span></div>
-<div class="tabs" role="tablist"><button role="tab" aria-selected="true" id="t1" type="button">Client list</button><button role="tab" aria-selected="false" id="t2" type="button">Network tree</button></div>
-<div id="v1" class="tw"><table><thead><tr><th>IP address</th><th>Device</th><th>MAC</th><th>Role</th><th>Sent</th><th>Received</th><th>Data</th><th>Protocols</th><th>Found by</th><th>First seen</th><th>Last seen</th></tr></thead><tbody id="cb"></tbody></table></div>
+<section><h2>Top domains &amp; services</h2><p class="sub">Domains observed passively in DNS queries, TLS SNI, and HTTP headers alongside detected application services. Click a row to filter matching packets.</p>
+<div class="two"><div><b>Top domains</b><div id="topDomains"></div></div><div><b>Top services</b><div id="topServices"></div></div></div></section>
+
+<section><h2>Devices on your network (<span id="cn">0</span>)</h2><p class="sub">IPv4 neighboring clients learned passively from captured traffic. IPv6 traffic is still captured and remains available in the packet list.</p>
+<div class="filters client-toolbar"><div class="tabs" role="tablist" style="margin:0"><button role="tab" aria-selected="true" id="t1" type="button">Client list</button><button role="tab" aria-selected="false" id="t2" type="button">Network tree</button></div><label class="chk"><input id="neighborsOnly" type="checkbox"> Neighbors only</label></div>
+<div id="v1" class="tw"><table><thead><tr><th>IP address</th><th>Device</th><th>MAC</th><th>Vendor</th><th>Role</th><th>Sent</th><th>Received</th><th>Data</th><th>Protocols</th><th>Identified by</th><th>First seen</th><th>Last seen</th></tr></thead><tbody id="cb"></tbody></table></div>
 <div id="v2" class="tree" hidden></div></section>
 
-<section><h2>Packets</h2><p class="sub">Search and filter the active capture. Double-click a row to inspect packet details.</p>
+<section id="packetsSection"><h2>Packets</h2><p class="sub">Search and filter the active capture, or switch to Conversations to group traffic into bidirectional flows. Double-click a packet row for details.</p>
 <form id="filterForm" class="filter-form">
   <label>Search<input id="q" placeholder="IP, port, or packet text"></label>
   <label>Protocol<select id="pf"><option>All</option><option>TCP</option><option>UDP</option><option>ICMP</option><option>ICMPv6</option><option>ARP</option><option>IPv4</option><option>IPv6</option><option>Ethernet</option><option>Other</option></select></label>
@@ -95,91 +104,32 @@
   <div class="filter-actions"><button type="submit">Apply filters</button><button id="resetFilters" type="button">Reset</button></div>
 </form>
 <div class="filters export-actions">
-  <button id="exportFilteredCsv" type="button">Export filtered CSV</button><button id="exportFilteredPdf" type="button">Export filtered PDF</button>
-  <button id="exportSelectedCsv" type="button">Export selected CSV</button><button id="exportSelectedPdf" type="button">Export selected PDF</button>
-  <button id="exportNetworkCsv" type="button">Export network report CSV</button><button id="exportNetworkPdf" type="button">Export network report PDF</button>
+  <button id="exportPdfPackets" type="button">Export PDF Packets</button>
+  <button id="exportCsvPackets" type="button">Export CSV Packets</button>
+  <button id="exportPdfReport" type="button">Export PDF Report</button>
+  <button id="openDecryptCsv" type="button">Decrypt CSV…</button>
   <span id="selectedCount" class="sub" style="margin:0"></span>
 </div>
-<div class="tw packet-table"><table><thead><tr><th><input id="selectAll" type="checkbox" aria-label="Select visible packets"></th><th>No</th><th>Time</th><th>From</th><th>To</th><th>Protocol</th><th>Bytes</th><th>Info</th></tr></thead><tbody id="pb"></tbody></table></div>
-<p class="sub" id="pc" style="margin-top:8px"></p></section>
+<div class="filters packet-toolbar">
+  <div class="tabs" role="tablist" style="margin:0">
+    <button role="tab" aria-selected="true" id="tabPackets" type="button">Packet list</button>
+    <button role="tab" aria-selected="false" id="tabFlows" type="button">Conversations (Flows)</button>
+    <button role="tab" aria-selected="false" id="tabDns" type="button">DNS activity</button>
+  </div>
+  <div class="filters" style="margin:0;align-items:center">
+    <button id="pausePacketView" type="button" aria-pressed="false">Pause live view</button>
+    <label id="dnsErrorsLabel" class="chk" hidden><input id="dnsErrorsOnly" type="checkbox"> Errors only</label>
+    <label id="flowSortLabel" class="chk" hidden>Sort by <select id="flowSort"><option value="bytes">Total bytes</option><option value="packets">Packet count</option><option value="recent">Most recent</option></select></label>
+    <button id="clearFlowFilter" type="button" hidden>Clear flow filter</button>
+  </div>
+</div>
+<div id="packetListView" class="tw packet-table"><table><thead><tr><th><input id="selectAll" type="checkbox" aria-label="Select visible packets"></th><th>No</th><th>Time</th><th>From</th><th>To</th><th>Protocol</th><th>Bytes</th><th>Info</th></tr></thead><tbody id="pb"></tbody></table></div>
+<div id="flowsView" class="tw packet-table" hidden><table><thead><tr><th>Endpoint A</th><th>Endpoint B</th><th>Protocol</th><th>Packets (A→B / B→A)</th><th>Total bytes</th><th>First seen</th><th>Last seen</th></tr></thead><tbody id="fb"></tbody></table></div>
+<div id="dnsView" class="tw packet-table" hidden><table><thead><tr><th>Time</th><th>Client</th><th>Type</th><th>Domain queried</th><th>Status</th><th>Detail</th></tr></thead><tbody id="db"></tbody></table></div>
+<div class="filters pager" style="margin-top:8px"><span class="sub" id="pc" style="margin:0"></span><div id="filterPagerControls" class="filters" style="margin:0" hidden><button id="filterPrev" type="button">Previous</button><button id="filterNext" type="button">Next</button></div></div></section>
 </main>
 <aside class="rail"><h2>What to do next</h2><p class="sub">Advice updates as traffic changes, based on observed data.</p><div id="adv"></div></aside>
 
-</div>
-<div id="page-info" class="info-wrap">
-  <section id="about" class="info-section">
-    <p class="section-kicker">ABOUT THE PROJECT</p>
-    <h2>About LAN Watch</h2>
-    <p class="info-intro">LAN Watch is a web-based version of Group 3's Python-Based LAN Network Traffic Analyzer and Protocol Monitor. It is an educational tool for observing permitted traffic on a selected local network interface and making packet information easier to understand.</p>
-    <div class="about-grid">
-      <div class="about-card">
-        <h3>What it does</h3>
-        <p>It displays available packet details such as source and destination addresses, protocol, size, and capture time. Live summaries, device views, gateway-health checks, and downloadable reports help users explore how common network protocols work.</p>
-      </div>
-      <div class="about-card">
-        <h3>Project team</h3>
-        <ul class="team-list">
-          <li>Jerome Carpio</li>
-          <li>Timothy D. Cruz</li>
-          <li>Elijah Rain E. Dionisio</li>
-          <li>Ariel Earold Guarin</li>
-          <li>Daniel I. Dimanlanta</li>
-        </ul>
-      </div>
-    </div>
-    <p class="project-note"><strong>Use responsibly:</strong> LAN Watch is intended for educational use on a private or otherwise authorized network. What appears depends on the selected interface, operating-system permissions, and network configuration; it does not decrypt HTTPS traffic.</p>
-  </section>
-
-  <section id="tutorial" class="info-section">
-    <p class="section-kicker">QUICK START</p>
-    <h2>How to use LAN Watch</h2>
-    <ol class="tutorial-steps">
-      <li><h3>Sign in</h3><p>Open the main page and sign in, or create an account and complete email verification if asked.</p></li>
-      <li><h3>Choose an interface</h3><p>Select the network adapter connected to the LAN you are authorized to monitor. Use Refresh if the adapter list needs updating.</p></li>
-      <li><h3>Choose device discovery</h3><p>The ping-at-start option is checked by default. It checks hosts once on the selected private IPv4 subnet (up to 256 addresses); devices that block ping may not reply.</p></li>
-      <li><h3>Start the capture</h3><p>Press Start and allow a little time for packets to arrive. “No activity” means the capture has not received packets yet.</p></li>
-      <li><h3>Explore the traffic</h3><p>Review the client list or network tree, traffic charts, health status, and “What to do next” advice. Use packet filters to narrow results; double-click a packet row for details.</p></li>
-      <li><h3>Stop and export</h3><p>Press Stop when finished. Use the export buttons for filtered packets, selected rows, or a network report in CSV or PDF. Exports are password-protected; enter and confirm a password of at least 8 characters. Your browser controls the download folder.</p></li>
-      <li><h3>Open a saved capture</h3><p>Press Packets… on the main page to open a saved capture from the list or choose a .msgpack file from your device. Each capture run is stored by the local server in session_packets.</p></li>
-    </ol>
-    <p class="project-note"><strong>Permissions:</strong> Packet capture may require administrator privileges and a compatible capture driver. Only monitor a private network you own or have permission to inspect.</p>
-  </section>
-
-  <section id="faq" class="info-section">
-    <p class="section-kicker">HELP &amp; GUIDANCE</p>
-    <h2>Frequently asked questions</h2>
-    <div class="faq-list">
-      <details>
-        <summary>Will LAN Watch show every packet and device on my network?</summary>
-        <p>No. It can only display packets visible to the selected network interface. On switched Wi-Fi or Ethernet networks, traffic exchanged directly between other devices may not be visible.</p>
-      </details>
-      <details>
-        <summary>How does the device list find hosts?</summary>
-        <p>It learns IPv4 devices from captured traffic and can optionally ping hosts once when capture starts. The ping check is limited to the selected private subnet and up to 256 addresses. Devices that block ping may not appear.</p>
-      </details>
-      <details>
-        <summary>Does LAN Watch decrypt HTTPS or show private message contents?</summary>
-        <p>No. The analyzer presents packet metadata and available protocol/header details. It does not decrypt HTTPS traffic.</p>
-      </details>
-      <details>
-        <summary>Why might capture require administrator permissions?</summary>
-        <p>Packet-capture drivers and operating systems may require elevated permissions. A compatible capture backend must also be installed and available.</p>
-      </details>
-      <details>
-        <summary>What do the network health and congestion messages mean?</summary>
-        <p>Health checks report the observed response from the default gateway. A congestion warning is based on gateway response and packet loss only; LAN Watch cannot identify which device, if any, is responsible.</p>
-      </details>
-      <details>
-        <summary>Where do exported files go?</summary>
-        <p>Files are downloaded by your browser. They usually appear in its Downloads folder, unless your browser is configured to ask where to save each file or use another folder.</p>
-      </details>
-      <details>
-        <summary>What if I forget the export password?</summary>
-        <p>Exports are password-protected. Keep the password you entered when exporting; LAN Watch cannot recover it for you.</p>
-      </details>
-    </div>
-  </section>
-  <footer class="info-footer">LAN Watch · Group 3 · University of Makati · College of Computing and Information Sciences</footer>
 </div>
 </div>
 
@@ -192,13 +142,21 @@
   <form method="dialog"><button class="dialog-close" aria-label="Close">Close</button></form>
   <h2>Saved packet captures</h2>
   <p class="sub">Choose a capture from session_packets or open a MessagePack file from your device. Double-click a packet to inspect it.</p>
-  <div class="filters"><select id="savedFiles" aria-label="Saved capture file"></select><button id="loadSaved" type="button">Open capture</button></div>
+  <div class="filters"><select id="savedFiles" aria-label="Saved capture file"></select><button id="loadSaved" type="button">Open capture</button><button id="renameSaved" type="button">Rename…</button><button id="deleteSaved" type="button">Delete</button></div>
+  <form id="renameSavedRow" class="filters session-inline-action" hidden><input id="renameSavedInput" type="text" maxlength="80" aria-label="New capture name" placeholder="New capture name"><button type="submit">Save name</button><button id="cancelRenameSaved" type="button">Cancel</button></form>
+  <div id="deleteSavedRow" class="filters session-inline-action danger" hidden><span id="deleteSavedPrompt" class="sub" style="margin:0"></span><button id="confirmDeleteSaved" type="button">Confirm delete</button><button id="cancelDeleteSaved" type="button">Cancel</button></div>
+  <p id="savedActionMsg" class="sub" role="status" aria-live="polite"></p>
   <div class="filters"><input id="localCaptureFile" type="file" accept=".msgpack"><button id="openLocalCapture" type="button">Open from this device</button></div>
   <section id="savedReport" class="saved-report" hidden>
     <div class="saved-report-heading">
       <div><h3 id="savedReportTitle">Network Report</h3><p id="savedReportMeta" class="sub"></p></div>
-      <div class="filters"><button id="savedReportCsv" type="button">Export report CSV</button><button id="savedReportPdf" type="button">Export report PDF</button></div>
+      <div class="filters"><button id="savedReportPdf" type="button">Export PDF Report</button></div>
     </div>
+    <div id="savedCompareBar" class="filters compare-bar" hidden>
+      <label class="chk">Compare with <select id="compareBaseline" aria-label="Baseline saved capture"></select></label>
+      <button id="compareSavedBtn" type="button">Compare sessions</button>
+    </div>
+    <div id="savedCompareResult" class="compare-result" hidden></div>
     <div id="savedReportStats" class="saved-report-stats"></div>
     <div id="savedHealth" class="health" role="status"></div>
     <div class="saved-report-panels">
@@ -206,7 +164,11 @@
       <section><h4>Protocol summary</h4><div id="savedProtocols"></div></section>
     </div>
     <div class="saved-report-panels">
-      <section><h4>Client list</h4><div class="tw saved-report-table"><table><thead><tr><th>IP address</th><th>MAC address</th><th>Sent</th><th>Received</th><th>Data</th><th>Protocols</th></tr></thead><tbody id="savedClients"></tbody></table></div></section>
+      <section><h4>Top services</h4><div id="savedServices"></div></section>
+      <section><h4>Top domains observed</h4><div id="savedDomains"></div></section>
+    </div>
+    <div class="saved-report-panels">
+      <section><h4>Client list</h4><div class="tw saved-report-table"><table><thead><tr><th>IP address</th><th>Device</th><th>MAC address</th><th>Vendor</th><th>Sent</th><th>Received</th><th>Data</th><th>Protocols</th></tr></thead><tbody id="savedClients"></tbody></table></div></section>
       <section><h4>Network tree</h4><div id="savedTree" class="tree"></div></section>
     </div>
   </section>
@@ -219,9 +181,43 @@
   <form method="dialog"><button class="dialog-close" aria-label="Close">Close</button></form>
   <h2>Possible network congestion detected</h2>
   <p id="congestionDescription" class="sub"></p>
-  <p class="sub">This warning is based on gateway response time and packet loss. LAN Watch cannot determine which device, if any, caused the issue, so it does not list suspected devices or causes.</p>
+  <p class="sub">This warning is based on gateway response time and packet loss. LAN Traffic Analyzer cannot determine which device, if any, caused the issue, so it does not list suspected devices or causes.</p>
 </dialog>
 
-<script src="/script.js"></script>
+<dialog id="exportPasswordDialog" class="app-dialog password-dialog">
+  <form id="exportPasswordCloseForm" method="dialog"><button class="dialog-close" aria-label="Close">Close</button></form>
+  <h2 id="exportPasswordTitle">Protect exported file</h2>
+  <p class="sub">Enter a password with at least 8 characters. Keep this password safe; LAN Traffic Analyzer cannot recover it.</p>
+  <form id="exportPasswordForm" class="dialog-form">
+    <label>Export password<div class="password-field"><input id="exportPassword" name="password" type="password" autocomplete="new-password" minlength="8" required><button class="password-toggle" type="button" aria-pressed="false" aria-label="Show password">Show</button></div></label>
+    <label>Confirm password<div class="password-field"><input id="exportPasswordConfirm" name="confirm" type="password" autocomplete="new-password" minlength="8" required><button class="password-toggle" type="button" aria-pressed="false" aria-label="Show password">Show</button></div></label>
+    <p id="exportPasswordMessage" class="sub dialog-error" role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button id="exportPasswordCancel" type="button">Cancel</button><button class="primary" type="submit">Export</button></div>
+  </form>
+</dialog>
+
+<dialog id="decryptCsvDialog" class="app-dialog password-dialog">
+  <form id="decryptCsvCloseForm" method="dialog"><button class="dialog-close" aria-label="Close">Close</button></form>
+  <h2>Decrypt exported CSV</h2>
+  <p class="sub">Select an encrypted LAN Traffic Analyzer CSV export and enter its password to download a plain CSV file.</p>
+  <form id="decryptCsvForm" class="dialog-form">
+    <label>Encrypted CSV file<input id="decryptCsvFile" name="file" type="file" accept=".csv" required></label>
+    <label>Export password<div class="password-field"><input id="decryptCsvPassword" name="password" type="password" autocomplete="current-password" required><button class="password-toggle" type="button" aria-pressed="false" aria-label="Show password">Show</button></div></label>
+    <p id="decryptCsvMessage" class="sub dialog-error" role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button id="decryptCsvCancel" type="button">Cancel</button><button class="primary" type="submit">Decrypt and download</button></div>
+  </form>
+</dialog>
+
+<dialog id="nicknameDialog" class="app-dialog password-dialog">
+  <form id="nicknameCloseForm" method="dialog"><button class="dialog-close" aria-label="Close">Close</button></form>
+  <h2>Device nickname</h2>
+  <p id="nicknameTarget" class="sub"></p>
+  <form id="nicknameForm" class="dialog-form">
+    <label>Custom label<input id="nicknameInput" name="nickname" type="text" maxlength="64" placeholder="e.g. Living Room TV"></label>
+    <div class="dialog-actions"><button id="nicknameClear" type="button">Clear label</button><button id="nicknameCancel" type="button">Cancel</button><button class="primary" type="submit">Save label</button></div>
+  </form>
+</dialog>
+
+<script src="script.js"></script>
 </body>
 </html>

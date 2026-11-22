@@ -1,8 +1,9 @@
+import json
 import os
 import re
 import requests
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import auth as fb_auth, credentials, firestore
 from google.api_core.exceptions import GoogleAPIError
 
 SIGN_UP_URL = "https://identitytoolkit.googleapis.com/v1/accounts:signUp"
@@ -11,6 +12,7 @@ SEND_OOB_URL = "https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode"
 LOOKUP_URL = "https://identitytoolkit.googleapis.com/v1/accounts:lookup"
 TOKEN_URL = "https://securetoken.googleapis.com/v1/token"
 FIREBASE_APP_NAME = "packet-sniffer-auth"
+GMAIL_PATTERN = re.compile(r"[a-z0-9._%+-]+@gmail\.com")
 
 
 def validate_password(password: str) -> tuple[bool, str]:
@@ -37,18 +39,42 @@ def normalize_username(username: str) -> tuple[bool, str]:
 
 
 class FirebaseAuthClient:
-    def __init__(self, web_api_key: str, service_account_path: str):
+    def __init__(self, web_api_key: str, service_account_path: str | dict):
         if not web_api_key:
             raise ValueError("Missing FIREBASE_WEB_API_KEY.")
-        if not service_account_path or not os.path.exists(service_account_path):
-            raise FileNotFoundError(f"Service account JSON not found: {service_account_path}")
+
+        cert_source: str | dict
+        if isinstance(service_account_path, dict):
+            if not service_account_path:
+                raise ValueError("Firebase service-account credentials are empty.")
+            cert_source = service_account_path
+        elif isinstance(service_account_path, str):
+            raw_value = service_account_path.strip()
+            if raw_value.startswith("{"):
+                try:
+                    parsed = json.loads(raw_value)
+                except ValueError as exc:
+                    raise ValueError(
+                        "Invalid JSON in Firebase service-account credentials."
+                    ) from exc
+                if not isinstance(parsed, dict) or not parsed:
+                    raise ValueError("Firebase service-account JSON must be an object.")
+                cert_source = parsed
+            else:
+                if not raw_value or not os.path.isfile(raw_value):
+                    raise FileNotFoundError(
+                        f"Service account JSON not found: {raw_value or '<unset>'}"
+                    )
+                cert_source = raw_value
+        else:
+            raise ValueError("Missing Firebase service-account credentials.")
 
         self.api_key = web_api_key
 
         try:
             app = firebase_admin.get_app(FIREBASE_APP_NAME)
         except ValueError:
-            cred = credentials.Certificate(service_account_path)
+            cred = credentials.Certificate(cert_source)
             app = firebase_admin.initialize_app(cred, name=FIREBASE_APP_NAME)
         self.db = firestore.client(app=app)
 
@@ -79,7 +105,7 @@ class FirebaseAuthClient:
             return {"ok": False, "error": clean_username}
 
         clean_email = email.strip().lower()
-        if not clean_email.endswith("@gmail.com"):
+        if not GMAIL_PATTERN.fullmatch(clean_email):
             return {"ok": False, "error": "Please use a valid @gmail.com address."}
 
         ok_p, msg_p = validate_password(password)
@@ -108,6 +134,7 @@ class FirebaseAuthClient:
 
         # Create the Firebase Auth user
         created_uid = None
+        profile_saved = False
         try:
             auth_data = self._post(
                 SIGN_UP_URL,
@@ -128,6 +155,7 @@ class FirebaseAuthClient:
                 "email_verified": False,
                 "created_at": firestore.SERVER_TIMESTAMP,
             })
+            profile_saved = True
 
             # Send verification email after storing the profile so an email
             # delivery failure can be recovered by signing in and resending.
@@ -147,8 +175,19 @@ class FirebaseAuthClient:
             }
 
         except Exception as exc:
-            if created_uid is None:
-                username_ref.delete()
+            if created_uid is None or not profile_saved:
+                if created_uid is not None:
+                    try:
+                        fb_auth.delete_user(
+                            created_uid,
+                            app=firebase_admin.get_app(FIREBASE_APP_NAME),
+                        )
+                    except Exception:
+                        pass
+                try:
+                    username_ref.delete()
+                except Exception:
+                    pass
                 return {"ok": False, "error": f"Registration failed: {exc}"}
             return {
                 "ok": False,
@@ -185,7 +224,7 @@ class FirebaseAuthClient:
                 return {"ok": False, "error": "Invalid username or email."}
             u_doc = self.db.collection("usernames").document(clean_u).get()
             if not u_doc.exists:
-                return {"ok": False, "error": "Account not found."}
+                return {"ok": False, "error": "Incorrect email/username or password."}
             email = u_doc.to_dict().get("email", "")
         else:
             email = identifier

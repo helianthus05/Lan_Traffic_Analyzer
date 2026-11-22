@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>About, Tutorial &amp; FAQ — LAN Traffic Analyzer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="app-header">
+  <div class="header-title"><strong>LAN TRAFFIC ANALYZER</strong><span>Real-Time Packet Inspection · Topology Discovery · Automated Network Diagnostics</span></div>
+  <nav class="site-nav" aria-label="Page navigation">
+    <a href="index.html" class="nav-back">← Back to dashboard</a>
+    <a href="#about">About</a>
+    <a href="#tutorial">Tutorial</a>
+    <a href="#faq">FAQ</a>
+  </nav>
+  <div class="header-user"><button id="themeToggle" type="button" aria-pressed="false">Dark theme</button></div>
+</header>
+
+<div class="wrap">
+  <div class="about-topbar">
+    <a class="back-link-btn" href="index.html">← Back to main dashboard</a>
+  </div>
+
+  <div id="page-info" class="info-wrap">
+    <section id="about" class="info-section">
+      <p class="section-kicker">ABOUT THE PROJECT</p>
+      <h2>About LAN Traffic Analyzer</h2>
+      <p class="info-intro">LAN Traffic Analyzer is a local dashboard version of Group 3's Python-Based LAN Network Traffic Analyzer and Protocol Monitor. It is an educational tool for observing permitted traffic on a selected local network interface and making packet information easier to understand.</p>
+      <div class="about-grid">
+        <div class="about-card">
+          <h3>What it does</h3>
+          <p>It displays available packet details such as source and destination addresses, protocol, size, and capture time. Live summaries, device views, gateway-health checks, and downloadable reports help users explore how common network protocols work.</p>
+        </div>
+        <div class="about-card">
+          <h3>Project team</h3>
+          <ul class="team-list">
+            <li>Jerome Carpio</li>
+            <li>Timothy D. Cruz</li>
+            <li>Elijah Rain E. Dionisio</li>
+            <li>Ariel Earold Guarin</li>
+            <li>Daniel I. Dimanlanta</li>
+          </ul>
+        </div>
+      </div>
+      <p class="project-note"><strong>Use responsibly:</strong> LAN Traffic Analyzer is intended for educational use on a private or otherwise authorized network. What appears depends on the selected interface, operating-system permissions, and network configuration; it does not decrypt HTTPS traffic.</p>
+    </section>
+
+    <section id="tutorial" class="info-section">
+      <p class="section-kicker">QUICK START</p>
+      <h2>How to use LAN Traffic Analyzer</h2>
+      <ol class="tutorial-steps">
+        <li><h3>Sign in</h3><p>Open the app and sign in, or create an account and complete email verification if asked.</p></li>
+        <li><h3>Choose an interface</h3><p>Select the network adapter connected to the LAN you are authorized to monitor. Use Refresh if the adapter list needs updating.</p></li>
+        <li><h3>Start the capture</h3><p>Press Start and allow a little time for packets to arrive. LAN Traffic Analyzer passively listens to traffic visible on the selected adapter and lists neighboring IPv4 clients as packets arrive. “No activity” means the capture has not received packets yet.</p></li>
+        <li><h3>Explore the traffic</h3><p>Review the client list (with optional custom nicknames and Neighbors-only filtering), network tree, traffic charts, top domains &amp; services, health status, and “What to do next” advice. Click any device, domain, service, or top talker to filter its packets, pause the live view while reading, switch to Conversations (Flows) or DNS activity, or double-click a packet row for details.</p></li>
+        <li><h3>Stop and export</h3><p>Press Stop when finished. Use <strong>Export PDF Packets</strong>, <strong>Export CSV Packets</strong>, or <strong>Export PDF Report</strong> to save password-protected files (minimum 8 characters); use <strong>Decrypt CSV…</strong> anytime to unlock an exported CSV.</p></li>
+        <li><h3>Open, rename, or compare a saved capture</h3><p>Press Packets… on the main page to open, rename, delete, or compare saved .msgpack captures in session_packets, or open a .msgpack file from your device.</p></li>
+      </ol>
+      <p class="project-note"><strong>Permissions:</strong> Packet capture may require administrator privileges and a compatible capture driver. Only monitor a private network you own or have permission to inspect.</p>
+    </section>
+
+    <section id="faq" class="info-section">
+      <p class="section-kicker">HELP &amp; GUIDANCE</p>
+      <h2>Frequently asked questions</h2>
+      <div class="faq-list">
+        <details>
+          <summary>Will LAN Traffic Analyzer show every packet and device on my network?</summary>
+          <p>No. It can only display packets visible to the selected network interface. On switched Wi-Fi or Ethernet networks, traffic exchanged directly between other devices may not be visible.</p>
+        </details>
+        <details>
+          <summary>How does the device list find neighboring hosts?</summary>
+          <p>It learns IPv4 neighboring clients passively from captured traffic (source/destination IPs, MAC addresses, vendor OUIs, reverse DNS, and passive DHCP, mDNS, SSDP, or NetBIOS metadata) without sending active scan traffic across the network.</p>
+        </details>
+        <details>
+          <summary>Does LAN Traffic Analyzer decrypt HTTPS or show private message contents?</summary>
+          <p>No. The analyzer presents packet metadata and available protocol/header details. It does not decrypt HTTPS traffic.</p>
+        </details>
+        <details>
+          <summary>Why might capture require administrator permissions?</summary>
+          <p>Packet-capture drivers and operating systems may require elevated permissions. A compatible capture backend must also be installed and available.</p>
+        </details>
+        <details>
+          <summary>What do the network health and congestion messages mean?</summary>
+          <p>Health checks report the observed response from the default gateway. A congestion warning is based on gateway response and packet loss only; LAN Traffic Analyzer cannot identify which device, if any, is responsible.</p>
+        </details>
+        <details>
+          <summary>Where do exported files go?</summary>
+          <p>Files are downloaded by your browser or saved through the desktop Save dialog. In browser mode they usually appear in your Downloads folder.</p>
+        </details>
+        <details>
+          <summary>What if I forget the export password?</summary>
+          <p>Exports are password-protected. Keep the password you entered when exporting; LAN Traffic Analyzer cannot recover it for you.</p>
+        </details>
+      </div>
+    </section>
+
+    <div class="about-bottombar">
+      <a class="back-link-btn" href="index.html">← Back to main dashboard</a>
+    </div>
+    <footer class="info-footer">LAN Traffic Analyzer · Group 3 · University of Makati · College of Computing and Information Sciences</footer>
+  </div>
+</div>
+
+<script>
+const themeButton = document.querySelector("#themeToggle");
+function applyTheme(theme, persist = false) {
+  const mode = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = mode;
+  if (themeButton) {
+    const isDark = mode === "dark";
+    themeButton.setAttribute("aria-pressed", String(isDark));
+    themeButton.textContent = isDark ? "Light theme" : "Dark theme";
+  }
+  if (persist) {
+    try {
+      localStorage.setItem("lan_traffic_analyzer_theme", mode);
+    } catch {
+      // Ignore storage restrictions.
+    }
+  }
+}
+(function initTheme() {
+  let saved = "light";
+  try {
+    const stored =
+      localStorage.getItem("lan_traffic_analyzer_theme") ??
+      localStorage.getItem("lan_watch_theme");
+    if (stored === "dark") saved = "dark";
+  } catch {
+    saved = "light";
+  }
+  applyTheme(saved, false);
+})();
+if (themeButton) {
+  themeButton.addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme(next, true);
+  });
+}
+</script>
+</body>
+</html>
