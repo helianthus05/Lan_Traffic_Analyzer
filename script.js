@@ -8,6 +8,10 @@ let S;
 let pollTimer = null;
 let renderTimer = null;
 let healthTimer = null;
+let resourceTimer = null;
+let resourceRequestInFlight = false;
+let resourceHistory = { cpu: Array(60).fill(0), ramMb: Array(60).fill(0) };
+let activeClientTab = "list";
 let selectedIp = "";
 let defaultGatewayIp = "";
 let localHostname = "";
@@ -324,7 +328,7 @@ function renderTopDomainsAndServices() {
   renderCounter(S.services, "#topServices", "", "No services observed yet");
 }
 
-function graph(selector, values, format) {
+function graph(selector, values, format, options = {}) {
   const canvas = $(selector);
   if (!canvas) return;
   const width = Math.max(1, canvas.clientWidth * 2);
@@ -332,8 +336,10 @@ function graph(selector, values, format) {
   if (canvas.width !== width) canvas.width = width;
   if (canvas.height !== height) canvas.height = height;
   const context = canvas.getContext("2d");
-  const peak = Math.max(1, ...values);
-  const color = getComputedStyle(document.documentElement).getPropertyValue("--teal").trim();
+  const minPeak = Number(options.minPeak) || 1;
+  const peak = Math.max(minPeak, ...values);
+  const styles = getComputedStyle(document.documentElement);
+  const color = styles.getPropertyValue(options.cssVar || "--teal").trim();
   context.clearRect(0, 0, width, height);
   context.strokeStyle = color;
   context.lineWidth = 3;
@@ -345,9 +351,14 @@ function graph(selector, values, format) {
     else context.moveTo(x, y);
   });
   context.stroke();
-  context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--mute").trim();
+  context.fillStyle = styles.getPropertyValue("--mute").trim();
   context.font = "22px sans-serif";
   context.fillText(`peak ${format(peak)}`, 6, 20);
+}
+
+function drawResourceGraphs() {
+  graph("#gCpu", resourceHistory.cpu, value => `${value.toFixed(1)}%`, { minPeak: 10, cssVar: "--teal" });
+  graph("#gRam", resourceHistory.ramMb, value => `${value.toFixed(1)} MB`, { minPeak: 32, cssVar: "--udp" });
 }
 
 function setHealth(state, description) {
@@ -587,6 +598,199 @@ async function resolveMissingDeviceIdentities(entries) {
   }
 }
 
+function svgGatewayIcon() {
+  return `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M14 26V13M34 26V13"/>
+    <path d="M10 10.5a5.5 5.5 0 0 1 8 0M30 10.5a5.5 5.5 0 0 1 8 0"/>
+    <rect x="6" y="26" width="36" height="12" rx="3" fill="currentColor" fill-opacity="0.14"/>
+    <circle cx="13" cy="32" r="1.5" fill="currentColor" stroke="none"/>
+    <circle cx="19" cy="32" r="1.5" fill="currentColor" stroke="none"/>
+    <path d="M27 32h9"/>
+  </svg>`;
+}
+
+function svgPcIcon() {
+  return `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="6" y="9" width="36" height="24" rx="3" fill="currentColor" fill-opacity="0.14"/>
+    <rect x="10" y="13" width="28" height="15" rx="1.2" stroke-width="1.6"/>
+    <path d="M21 33v6M27 33v6M15 39h18"/>
+  </svg>`;
+}
+
+function svgHalfPcHalfPhoneIcon() {
+  return `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M8 11h14.5v22H8a3 3 0 0 1-3-3V14a3 3 0 0 1 3-3z" fill="currentColor" fill-opacity="0.14" stroke="none"/>
+    <path d="M22.5 11H8a3 3 0 0 0-3 3v16a3 3 0 0 0 3 3h14.5"/>
+    <path d="M22.5 15H9.5v13h13" stroke-width="1.5"/>
+    <path d="M19.5 33v6M12.5 39h10"/>
+    <line x1="24" y1="6" x2="24" y2="42" stroke-dasharray="2.5 2.5" stroke-width="1.6" opacity="0.65"/>
+    <path d="M25.5 8H36a3 3 0 0 1 3 3v26a3 3 0 0 1-3 3H25.5z" fill="currentColor" fill-opacity="0.14" stroke="none"/>
+    <path d="M25.5 8H36a3 3 0 0 1 3 3v26a3 3 0 0 1-3 3H25.5"/>
+    <path d="M25.5 13h10v21h-10" stroke-width="1.5"/>
+    <path d="M28 10.5h4.5" stroke-width="1.8"/>
+    <circle cx="30" cy="37" r="1.4" fill="currentColor" stroke="none"/>
+  </svg>`;
+}
+
+function drawDiagramConnectors() {
+  const wrap = $("#v3");
+  if (!wrap || wrap.hidden) return;
+  wrap.querySelectorAll(".diagram-canvas-box").forEach(box => {
+    const svg = box.querySelector(".diagram-svg");
+    const rootNode = box.querySelector(".diagram-root-tier .diagram-node");
+    const childNodes = [...box.querySelectorAll(".diagram-children .diagram-node")];
+    if (!svg || !rootNode || !childNodes.length) {
+      if (svg) svg.innerHTML = "";
+      return;
+    }
+    const boxRect = box.getBoundingClientRect();
+    const width = Math.max(1, box.scrollWidth);
+    const height = Math.max(1, box.scrollHeight);
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    const scrollLeft = box.scrollLeft;
+    const rootRect = rootNode.getBoundingClientRect();
+    const x1 = rootRect.left - boxRect.left + scrollLeft + rootRect.width / 2;
+    const y1 = rootRect.bottom - boxRect.top;
+
+    const paths = [`<circle class="diagram-dot is-gateway" cx="${x1.toFixed(1)}" cy="${y1.toFixed(1)}" r="3.5"></circle>`];
+    childNodes.forEach(child => {
+      const childRect = child.getBoundingClientRect();
+      const x2 = childRect.left - boxRect.left + scrollLeft + childRect.width / 2;
+      const y2 = childRect.top - boxRect.top;
+      const midY = y1 + Math.max(18, (y2 - y1) * 0.52);
+      const isSelf = child.classList.contains("is-self");
+      const linkClass = isSelf ? "is-self-link" : "";
+      const dotClass = isSelf ? "diagram-dot" : "diagram-dot is-unsure";
+      paths.push(
+        `<path class="${linkClass}" d="M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${x1.toFixed(1)} ${midY.toFixed(1)}, ${x2.toFixed(1)} ${midY.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}"></path>`,
+        `<circle class="${dotClass}" cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3"></circle>`
+      );
+    });
+    svg.innerHTML = paths.join("");
+  });
+}
+
+function renderDiagram(entries, allEntries) {
+  const container = $("#v3");
+  if (!container) return;
+  if (!entries.length) {
+    container.innerHTML = '<span class="sub">No devices observed yet. Start capture to visualize connected devices.</span>';
+    return;
+  }
+
+  const allSubnets = new Map();
+  allEntries.forEach(([ip, record]) => {
+    const net = record.network || networkOf(ip);
+    if (!allSubnets.has(net)) allSubnets.set(net, []);
+    allSubnets.get(net).push([ip, record]);
+  });
+
+  const visibleSubnets = new Map();
+  entries.forEach(([ip, record]) => {
+    const net = record.network || networkOf(ip);
+    if (!visibleSubnets.has(net)) visibleSubnets.set(net, []);
+    visibleSubnets.get(net).push([ip, record]);
+  });
+
+  const legendHtml = `
+    <div class="diagram-legend" aria-label="Device icon legend">
+      <span class="diagram-legend-item" style="color:var(--amber)">${svgGatewayIcon()}<span>Network gateway</span></span>
+      <span class="diagram-legend-item" style="color:var(--teal)">${svgPcIcon()}<span>This device (PC)</span></span>
+      <span class="diagram-legend-item" style="color:var(--udp)">${svgHalfPcHalfPhoneIcon()}<span>Connected / unsure device (PC or mobile)</span></span>
+    </div>`;
+
+  const renderDeviceCard = ([ip, record], role, extraClass = "") => {
+    const isGateway = role.startsWith("Gateway");
+    const isSelf = role === "This device";
+    const icon = isGateway ? svgGatewayIcon() : (isSelf ? svgPcIcon() : svgHalfPcHalfPhoneIcon());
+    const roleClass = isGateway ? "is-gateway" : (isSelf ? "is-self" : "is-unsure");
+    const nickname = getDeviceNickname(ip, record.mac);
+    const displayName = nickname || record.name || (isGateway ? "Network gateway" : (isSelf ? (localHostname || "This computer") : "Unknown device"));
+    const meta = [record.vendor, record.mac].filter(Boolean).join(" · ") || "No MAC/vendor yet";
+    const totalPkts = (record.sent || 0) + (record.received || 0);
+    const totalBytes = (record.sentBytes || 0) + (record.receivedBytes || 0);
+    const roleLabel = isGateway ? role : (isSelf ? "This device" : "Connected device");
+    return `
+      <div class="diagram-node clickable-node ${roleClass} ${extraClass}" tabindex="0" role="button" data-client-ip="${escapeHtml(ip)}" title="Click to filter packets involving ${escapeHtml(ip)}">
+        <div class="diagram-node-top">
+          <div class="node-icon">${icon}</div>
+          <div class="node-head">
+            <span class="node-role">${escapeHtml(roleLabel)}</span>
+            <div class="node-ip">${escapeHtml(ip)}</div>
+          </div>
+        </div>
+        <div class="node-name-row">
+          <span class="node-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
+          <button type="button" class="edit-nick-btn" data-nick-ip="${escapeHtml(ip)}" data-nick-mac="${escapeHtml(record.mac || "")}" title="Set custom device nickname">Edit</button>
+        </div>
+        <div class="node-meta" title="${escapeHtml(meta)}">${escapeHtml(meta)}</div>
+        <div class="node-stats"><span><b>${totalPkts.toLocaleString()}</b> pkts</span><span><b>${formatBytes(totalBytes)}</b></span></div>
+      </div>`;
+  };
+
+  const subnetsHtml = [...visibleSubnets].sort(([a], [b]) => a.localeCompare(b)).map(([network, visibleDevices]) => {
+    const subnetAll = allSubnets.get(network) || visibleDevices;
+    const gatewayEntry = visibleDevices.find(([ip]) => localRole(ip).startsWith("Gateway"))
+      || subnetAll.find(([ip]) => localRole(ip).startsWith("Gateway"));
+    const gatewayInVisible = gatewayEntry && visibleDevices.some(([ip]) => ip === gatewayEntry[0]);
+
+    let rootHtml = "";
+    if (gatewayEntry && gatewayInVisible) {
+      rootHtml = renderDeviceCard(gatewayEntry, localRole(gatewayEntry[0]));
+    } else if (gatewayEntry) {
+      rootHtml = renderDeviceCard(gatewayEntry, localRole(gatewayEntry[0]), "is-virtual-hub");
+    } else {
+      const hubIp = defaultGatewayIp && networkOf(defaultGatewayIp) === network
+        ? defaultGatewayIp
+        : network;
+      rootHtml = `
+        <div class="diagram-node is-gateway is-virtual-hub">
+          <div class="diagram-node-top">
+            <div class="node-icon">${svgGatewayIcon()}</div>
+            <div class="node-head">
+              <span class="node-role">Network gateway</span>
+              <div class="node-ip">${escapeHtml(hubIp)}</div>
+            </div>
+          </div>
+          <div class="node-name-row"><span class="node-name">Subnet gateway</span></div>
+          <div class="node-meta">No gateway packets observed in list</div>
+          <div class="node-stats"><span><b>${visibleDevices.length}</b> node(s)</span><span>${escapeHtml(network)}</span></div>
+        </div>`;
+    }
+
+    const childDevices = visibleDevices
+      .filter(([ip]) => !(gatewayEntry && gatewayInVisible && ip === gatewayEntry[0]))
+      .sort((a, b) => {
+        const aSelf = localRole(a[0]) === "This device" ? 0 : 1;
+        const bSelf = localRole(b[0]) === "This device" ? 0 : 1;
+        if (aSelf !== bSelf) return aSelf - bSelf;
+        return a[0].localeCompare(b[0]);
+      });
+
+    const childrenHtml = childDevices.length
+      ? childDevices.map(entry => renderDeviceCard(entry, localRole(entry[0]))).join("")
+      : '<span class="sub">Only the gateway has been observed on this subnet so far.</span>';
+
+    return `
+      <div class="diagram-subnet">
+        <div class="diagram-subnet-head">
+          <strong>Network ${escapeHtml(network)}</strong>
+          <span>${visibleDevices.length.toLocaleString()} device(s) shown</span>
+        </div>
+        <div class="diagram-canvas-box">
+          <svg class="diagram-svg" aria-hidden="true"></svg>
+          <div class="diagram-root-tier">${rootHtml}</div>
+          <div class="diagram-children">${childrenHtml}</div>
+        </div>
+      </div>`;
+  }).join("");
+
+  container.innerHTML = legendHtml + subnetsHtml;
+  if (activeClientTab === "diagram") {
+    requestAnimationFrame(drawDiagramConnectors);
+  }
+}
+
 function renderClients() {
   const neighborsOnly = Boolean($("#neighborsOnly")?.checked);
   const allEntries = Object.entries(S.clients)
@@ -626,6 +830,7 @@ function renderClients() {
     ).join("")}</ul>`
     : '<span class="sub">No devices observed.</span>';
 
+  renderDiagram(entries, allEntries);
   resolveMissingDeviceIdentities(allEntries);
 }
 
@@ -974,7 +1179,8 @@ function stopTimers() {
   if (pollTimer) clearInterval(pollTimer);
   if (renderTimer) clearInterval(renderTimer);
   if (healthTimer) clearInterval(healthTimer);
-  pollTimer = renderTimer = healthTimer = null;
+  if (resourceTimer) clearInterval(resourceTimer);
+  pollTimer = renderTimer = healthTimer = resourceTimer = null;
 }
 
 function hasDesktopBridge() {
@@ -1125,6 +1331,40 @@ async function syncCaptureStatus() {
   }
 }
 
+async function pollResources() {
+  if (resourceRequestInFlight) return;
+  resourceRequestInFlight = true;
+  try {
+    const data = await api("/api/system/resources");
+    const cpu = Number(data.cpu_percent) || 0;
+    const rss = Number(data.rss_bytes) || 0;
+    const vms = Number(data.vms_bytes) || 0;
+    const ramPct = Number(data.ram_percent) || 0;
+    const threads = Number(data.threads) || 1;
+    const qSize = Number(data.queue_size) || 0;
+    const qMax = Number(data.queue_max) || 30000;
+
+    $("#resCpu").textContent = `${cpu.toFixed(1)}%`;
+    $("#resRam").textContent = formatBytes(rss);
+    $("#resMem").textContent = formatBytes(vms);
+    $("#resThreads").textContent = `${threads} · ${qSize.toLocaleString()} / ${qMax.toLocaleString()}`;
+    $("#resCpuBar").style.width = `${Math.min(100, Math.max(0, cpu))}%`;
+    $("#resCpuNote").textContent = `${cpu.toFixed(1)}% (${Number(data.cpu_cores) || 1} cores)`;
+    $("#resRamBar").style.width = `${Math.min(100, Math.max(0, ramPct))}%`;
+    $("#resRamNote").textContent = `${ramPct.toFixed(2)}% of system`;
+
+    resourceHistory.cpu.push(cpu);
+    resourceHistory.cpu = resourceHistory.cpu.slice(-60);
+    resourceHistory.ramMb.push(rss / 1048576);
+    resourceHistory.ramMb = resourceHistory.ramMb.slice(-60);
+    drawResourceGraphs();
+  } catch {
+    // Resource metrics are best-effort; avoid overwriting capture status messages.
+  } finally {
+    resourceRequestInFlight = false;
+  }
+}
+
 async function showDashboard(user) {
   showAuthGate(false);
   $("#signedInUser").textContent = user ? `Signed in as ${user.username || user.email}` : "";
@@ -1132,7 +1372,9 @@ async function showDashboard(user) {
   await loadInterfaces();
   await syncCaptureStatus();
   checkHealth();
+  pollResources();
   healthTimer = setInterval(checkHealth, 5000);
+  if (!resourceTimer) resourceTimer = setInterval(pollResources, 2000);
 }
 
 async function loadInterfaces() {
@@ -2321,8 +2563,9 @@ $("#nicknameClear").addEventListener("click", () => {
   renderClients();
 });
 $("#nicknameCancel").addEventListener("click", () => $("#nicknameDialog").close());
-["#cb", "#v2"].forEach(selector => {
+["#cb", "#v2", "#v3"].forEach(selector => {
   const container = $(selector);
+  if (!container) return;
   const handleClient = event => {
     const editBtn = event.target.closest(".edit-nick-btn");
     if (editBtn) {
@@ -2378,13 +2621,26 @@ $("#fb").addEventListener("keydown", event => {
     activateFlowRow(row);
   }
 });
-[["t1", "t2", "v1", "v2"], ["t2", "t1", "v2", "v1"]].forEach(([active, inactive, shown, hidden]) => {
-  $("#" + active).addEventListener("click", () => {
-    $("#" + active).setAttribute("aria-selected", "true");
-    $("#" + inactive).setAttribute("aria-selected", "false");
-    $("#" + shown).hidden = false;
-    $("#" + hidden).hidden = true;
-  });
+function setClientTab(tab) {
+  activeClientTab = tab === "tree" ? "tree" : tab === "diagram" ? "diagram" : "list";
+  const isList = activeClientTab === "list";
+  const isTree = activeClientTab === "tree";
+  const isDiagram = activeClientTab === "diagram";
+  $("#t1").setAttribute("aria-selected", String(isList));
+  $("#t2").setAttribute("aria-selected", String(isTree));
+  $("#t3").setAttribute("aria-selected", String(isDiagram));
+  $("#v1").hidden = !isList;
+  $("#v2").hidden = !isTree;
+  $("#v3").hidden = !isDiagram;
+  if (isDiagram) {
+    requestAnimationFrame(drawDiagramConnectors);
+  }
+}
+$("#t1").addEventListener("click", () => setClientTab("list"));
+$("#t2").addEventListener("click", () => setClientTab("tree"));
+$("#t3").addEventListener("click", () => setClientTab("diagram"));
+window.addEventListener("resize", () => {
+  if (activeClientTab === "diagram") requestAnimationFrame(drawDiagramConnectors);
 });
 $("#loadSaved").addEventListener("click", () => {
   viewerToken = "";
@@ -2470,6 +2726,7 @@ $("#themeToggle").addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   applyTheme(next, true);
   render({ packets: false, graphs: true, forceSlow: false });
+  drawResourceGraphs();
 });
 document.querySelectorAll('a[href="about.html"]').forEach(link => {
   link.addEventListener("click", () => {

@@ -117,3 +117,16 @@ TROUBLESHOOTING
 - Start fails: choose an active adapter and check the error shown by the page
   and the Python terminal.
 - Blank page: keep the server terminal running and refresh the browser.
+
+CUSTOMIZING FIREBASE VERIFICATION PAGE & EMAIL BRANDING
+1. In Firebase Console -> Project Settings -> General, set the "Public-facing name"
+   to "LAN Traffic Analyzer" so verification emails no longer say "packet-sniffer-auth".
+2. Deploy `firebase_hosting/auth-action.html` using Firebase Hosting:
+     cd firebase_hosting
+     firebase login
+     firebase use packet-sniffer-auth
+     firebase deploy --only hosting
+3. In Firebase Console -> Authentication -> Templates -> Email address verification,
+   click Edit -> Customize action URL and set it to:
+     https://packet-sniffer-auth.web.app/auth-action.html
+

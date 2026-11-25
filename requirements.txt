@@ -7,3 +7,4 @@ pypdf>=4
 reportlab>=4
 requests>=2.31
 pywebview>=5.0
+psutil>=5.9

@@ -15,9 +15,20 @@ import secrets
 import shutil
 import statistics
 import tempfile
+import threading
 from threading import Event, Lock, Thread
 import time
 from urllib.parse import urlsplit
+
+try:
+    import resource as _posix_resource
+except ImportError:
+    _posix_resource = None
+
+try:
+    import psutil as _psutil
+except ImportError:
+    _psutil = None
 
 from flask import Flask, jsonify, request, send_file, send_from_directory, session
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -1037,6 +1048,177 @@ def resolve_devices():
         return jsonify(resolved=capture.identify_devices(devices))
     except Exception as exc:
         return jsonify(error=f"Could not resolve devices: {exc}"), 500
+
+
+_resource_lock = Lock()
+_resource_last_wall = None
+_resource_last_cpu = None
+_psutil_proc = None
+
+
+def _windows_memory_info():
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+            ("PrivateUsage", ctypes.c_size_t),
+        ]
+
+    class MEMORYSTATUSEX(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", wintypes.DWORD),
+            ("dwMemoryLoad", wintypes.DWORD),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+
+    rss_bytes = 0
+    vms_bytes = 0
+    total_phys = 0
+
+    counters = PROCESS_MEMORY_COUNTERS_EX()
+    counters.cb = ctypes.sizeof(counters)
+    kernel32 = ctypes.windll.kernel32
+    psapi = ctypes.windll.psapi
+    handle = kernel32.GetCurrentProcess()
+    if psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+        rss_bytes = int(counters.WorkingSetSize)
+        vms_bytes = int(counters.PrivateUsage or counters.PagefileUsage)
+
+    mem_status = MEMORYSTATUSEX()
+    mem_status.dwLength = ctypes.sizeof(mem_status)
+    if kernel32.GlobalMemoryStatusEx(ctypes.byref(mem_status)):
+        total_phys = int(mem_status.ullTotalPhys)
+
+    return rss_bytes, vms_bytes, total_phys
+
+
+def _posix_memory_and_threads():
+    rss_bytes = 0
+    vms_bytes = 0
+    total_phys = 0
+    threads = threading.active_count()
+
+    status_path = Path("/proc/self/status")
+    if status_path.exists():
+        try:
+            text = status_path.read_text(encoding="utf-8", errors="ignore")
+            for line in text.splitlines():
+                if line.startswith("VmRSS:"):
+                    rss_bytes = int(line.split()[1]) * 1024
+                elif line.startswith("VmSize:"):
+                    vms_bytes = int(line.split()[1]) * 1024
+                elif line.startswith("Threads:"):
+                    threads = int(line.split()[1])
+        except (OSError, ValueError, IndexError):
+            pass
+
+    if rss_bytes <= 0 and _posix_resource is not None:
+        try:
+            usage = _posix_resource.getrusage(_posix_resource.RUSAGE_SELF)
+            multiplier = 1 if os.uname().sysname == "Darwin" else 1024
+            rss_bytes = int(usage.ru_maxrss) * multiplier
+        except (OSError, AttributeError):
+            pass
+
+    try:
+        if hasattr(os, "sysconf"):
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            phys_pages = os.sysconf("SC_PHYS_PAGES")
+            if page_size > 0 and phys_pages > 0:
+                total_phys = int(page_size) * int(phys_pages)
+    except (OSError, ValueError):
+        pass
+
+    return rss_bytes, vms_bytes, total_phys, threads
+
+
+def _read_process_resources():
+    global _resource_last_wall, _resource_last_cpu, _psutil_proc
+    cpu_cores = max(1, os.cpu_count() or 1)
+    with _resource_lock:
+        if _psutil is not None:
+            try:
+                if _psutil_proc is None:
+                    _psutil_proc = _psutil.Process(os.getpid())
+                    _psutil_proc.cpu_percent(interval=None)
+                    cpu_percent = 0.0
+                else:
+                    raw_cpu = float(_psutil_proc.cpu_percent(interval=None))
+                    cpu_percent = min(100.0, max(0.0, round(raw_cpu / cpu_cores, 1)))
+                mem = _psutil_proc.memory_info()
+                rss_bytes = int(mem.rss)
+                vms_bytes = int(getattr(mem, "private", 0) or mem.vms)
+                total_phys = int(_psutil.virtual_memory().total)
+                threads = int(_psutil_proc.num_threads())
+                ram_percent = round((rss_bytes / total_phys) * 100.0, 2) if total_phys > 0 else 0.0
+                return {
+                    "pid": os.getpid(),
+                    "cpu_percent": cpu_percent,
+                    "cpu_cores": cpu_cores,
+                    "rss_bytes": rss_bytes,
+                    "vms_bytes": vms_bytes,
+                    "system_total_bytes": total_phys,
+                    "ram_percent": ram_percent,
+                    "threads": threads,
+                    "queue_size": persist_queue.qsize(),
+                    "queue_max": persist_queue.maxsize,
+                }
+            except Exception:
+                _psutil_proc = None
+
+        now_wall = time.perf_counter()
+        now_cpu = time.process_time()
+        if _resource_last_wall is None or _resource_last_cpu is None:
+            cpu_percent = 0.0
+        else:
+            d_wall = max(1e-6, now_wall - _resource_last_wall)
+            d_cpu = max(0.0, now_cpu - _resource_last_cpu)
+            cpu_percent = min(100.0, max(0.0, round((d_cpu / (d_wall * cpu_cores)) * 100.0, 1)))
+        _resource_last_wall = now_wall
+        _resource_last_cpu = now_cpu
+
+    if os.name == "nt":
+        rss_bytes, vms_bytes, total_phys = _windows_memory_info()
+        threads = threading.active_count()
+    else:
+        rss_bytes, vms_bytes, total_phys, threads = _posix_memory_and_threads()
+
+    ram_percent = round((rss_bytes / total_phys) * 100.0, 2) if total_phys > 0 else 0.0
+    return {
+        "pid": os.getpid(),
+        "cpu_percent": cpu_percent,
+        "cpu_cores": cpu_cores,
+        "rss_bytes": rss_bytes,
+        "vms_bytes": vms_bytes,
+        "system_total_bytes": total_phys,
+        "ram_percent": ram_percent,
+        "threads": threads,
+        "queue_size": persist_queue.qsize(),
+        "queue_max": persist_queue.maxsize,
+    }
+
+
+@app.get("/api/system/resources")
+@require_auth
+def system_resources():
+    return jsonify(_read_process_resources())
 
 
 @app.get("/api/status")

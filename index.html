@@ -76,6 +76,14 @@
 <div class="two" style="margin-top:16px"><div><p class="sub" style="margin:0">Packets per second, last 60 s</p><canvas id="g1"></canvas></div><div><p class="sub" style="margin:0">Bandwidth, last 60 s</p><canvas id="g2"></canvas></div></div>
 <div class="plain-summary"><b>Live traffic in plain English</b><p id="liveSummaryText" role="status" aria-live="off">Start a capture to see a plain-language explanation of the traffic.</p></div></section>
 
+<section id="resourceSection"><h2>Program resource usage</h2><p class="sub">Live CPU, physical RAM, virtual memory, and capture queue consumption for this LAN Traffic Analyzer process.</p>
+<div class="stats"><div><span>Process CPU</span><b id="resCpu">0.0%</b></div><div><span>RAM (RSS)</span><b id="resRam">0 B</b></div><div><span>Virtual / Commit</span><b id="resMem">0 B</b></div><div><span>Threads · Queue</span><b id="resThreads">1 · 0 / 30,000</b></div></div>
+<div class="resource-meters">
+  <div class="resource-meter-row"><span>CPU load</span><div class="meter"><i id="resCpuBar" style="width:0%"></i></div><small id="resCpuNote">0.0%</small></div>
+  <div class="resource-meter-row"><span>RAM share</span><div class="meter"><i id="resRamBar" style="width:0%"></i></div><small id="resRamNote">0.0% of system</small></div>
+</div>
+<div class="two" style="margin-top:12px"><div><p class="sub" style="margin:0">Process CPU %, last 60 samples</p><canvas id="gCpu"></canvas></div><div><p class="sub" style="margin:0">RAM usage (MB), last 60 samples</p><canvas id="gRam"></canvas></div></div></section>
+
 <section><h2>Most active devices</h2><p class="sub">Source is who sent the packets; destination is who received them. A device near the top is doing most of the talking.</p>
 <div class="two"><div><b>Sending most</b><div id="ts"></div></div><div><b>Receiving most</b><div id="tr"></div></div></div></section>
 
@@ -86,9 +94,10 @@
 <div class="two"><div><b>Top domains</b><div id="topDomains"></div></div><div><b>Top services</b><div id="topServices"></div></div></div></section>
 
 <section><h2>Devices on your network (<span id="cn">0</span>)</h2><p class="sub">IPv4 neighboring clients learned passively from captured traffic. IPv6 traffic is still captured and remains available in the packet list.</p>
-<div class="filters client-toolbar"><div class="tabs" role="tablist" style="margin:0"><button role="tab" aria-selected="true" id="t1" type="button">Client list</button><button role="tab" aria-selected="false" id="t2" type="button">Network tree</button></div><label class="chk"><input id="neighborsOnly" type="checkbox"> Neighbors only</label></div>
+<div class="filters client-toolbar"><div class="tabs" role="tablist" style="margin:0"><button role="tab" aria-selected="true" id="t1" type="button">Client list</button><button role="tab" aria-selected="false" id="t2" type="button">Network tree</button><button role="tab" aria-selected="false" id="t3" type="button">Visual diagram</button></div><label class="chk"><input id="neighborsOnly" type="checkbox"> Neighbors only</label></div>
 <div id="v1" class="tw"><table><thead><tr><th>IP address</th><th>Device</th><th>MAC</th><th>Vendor</th><th>Role</th><th>Sent</th><th>Received</th><th>Data</th><th>Protocols</th><th>Identified by</th><th>First seen</th><th>Last seen</th></tr></thead><tbody id="cb"></tbody></table></div>
-<div id="v2" class="tree" hidden></div></section>
+<div id="v2" class="tree" hidden></div>
+<div id="v3" class="diagram-wrap" hidden></div></section>
 
 <section id="packetsSection"><h2>Packets</h2><p class="sub">Search and filter the active capture, or switch to Conversations to group traffic into bidirectional flows. Double-click a packet row for details.</p>
 <form id="filterForm" class="filter-form">
